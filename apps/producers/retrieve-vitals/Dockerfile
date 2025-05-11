@@ -9,8 +9,7 @@ COPY . /app
 
 # Set environment variables inside the Dockerfile
 # Remove AWS keys from the Dockerfile
-# ENV AWS_ACCESS_KEY_ID=<your-access-key-id>
-# ENV AWS_SECRET_ACCESS_KEY=<your-secret-access-key>
+
 ENV AWS_DEFAULT_REGION=us-east-1
 ENV OUTPUT_S3_BUCKET=mjones3-patient-data
 ENV OUTPUT_S3_PREFIX =processed_data/
