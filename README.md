@@ -1,4 +1,4 @@
-# Heart Rate Anomaly Detection - Docker Compose Setup
+# Heart Rate Anomaly Detection
 
 ## Local Setup
 
