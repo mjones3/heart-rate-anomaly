@@ -79,7 +79,8 @@ services:
       - KAFKA_BROKER=kafka:9093
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_BUCKET=vitals
-      - INFLUXDB_ORG=pst
+      - INFLUXDB_ORG=local
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}  
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     depends_on:
@@ -96,8 +97,8 @@ services:
       - KAFKA_BROKER=kafka:9093
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_BUCKET=vitals
-      - INFLUXDB_ORG=pst
-      - INFLUXDB_TOKEN=
+      - INFLUXDB_ORG=local
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     ports:
       - "8086:8086"
     volumes:

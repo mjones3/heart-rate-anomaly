@@ -78,22 +78,30 @@ for message in consumer:
         # Decode the JSON message
         data = json.loads(message.value)
 
-        # Extract relevant data
-        patient_id = data['patient_id']
-        heart_rate = data['heart_rate']
-        respiratory_rate = data['respiratory_rate']
-        timestamp = data['time']
+        # Pull out patient_id and timestamp
+        patient_id    = data['patient_id']
+        timestamp_str = data['time']
+        timestamp     = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
 
-        # Convert timestamp to datetime object
-        timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+        # Build a single point with all remaining fields
+        point = (
+            Point("patient_vitals")
+              .tag("patient_id", patient_id)
+              .time(timestamp, WritePrecision.NS)
+        )
 
-        # Create InfluxDB points for heart_rate and respiratory_rate
-        heart_rate_point = Point("patient_vitals").tag("patient_id", patient_id).field("heart_rate", heart_rate).time(timestamp, WritePrecision.NS)
-        respiratory_rate_point = Point("patient_vitals").tag("patient_id", patient_id).field("respiratory_rate", respiratory_rate).time(timestamp, WritePrecision.NS)
+        # Dynamically add every other field in the JSON as a field on the point
+        for field_name, field_value in data.items():
+            if field_name in ('patient_id', 'time'):
+                continue
+            point = point.field(field_name, field_value)
 
-        # Write the points to InfluxDB
-        write_api.write(INFLUXDB_BUCKET, INFLUXDB_ORG, [heart_rate_point, respiratory_rate_point])
-        logger.info(f"Written data for patient {patient_id}: heart_rate={heart_rate}, respiratory_rate={respiratory_rate}")
+        # Write the complete point to InfluxDB
+        write_api.write(INFLUXDB_BUCKET, INFLUXDB_ORG, [point])
+        logger.info(
+            f"Written data for patient {patient_id} at {timestamp_str}: "
+            + ", ".join(f"{k}={v!r}" for k, v in data.items() if k not in ('patient_id','time'))
+        )
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
