@@ -72,39 +72,43 @@ consumer = KafkaConsumer(
 logger.info(f"Subscribed topics: {consumer.subscription()}")  # Log the subscription details
 
 for message in consumer:
-    logger.info(f"Received message: {message.value}")  # Log received message
+    # message.value is a bytes blob like:
+    # b'{"patient_id":"p010124",...}\n{"patient_id":"p010124",...}\n…'
 
     try:
-        # Decode the JSON message
-        data = json.loads(message.value)
+        # 1) Decode to string and split on newlines
+        raw = message.value.decode('utf-8')
+        lines = raw.splitlines()
 
-        # Pull out patient_id and timestamp
-        patient_id    = data['patient_id']
-        timestamp_str = data['time']
-        timestamp     = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+        for line in lines:
+            data = json.loads(line)
 
-        # Build a single point with all remaining fields
-        point = (
-            Point("patient_vitals")
-              .tag("patient_id", patient_id)
-              .time(timestamp, WritePrecision.NS)
-        )
+            # Pull out patient_id and timestamp
+            patient_id    = data['patient_id']
+            timestamp_str = data['time']
+            timestamp     = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
 
-        # Dynamically add every other field in the JSON as a field on the point
-        for field_name, field_value in data.items():
-            if field_name in ('patient_id', 'time'):
-                continue
-            point = point.field(field_name, field_value)
+            # Build the InfluxDB point
+            point = (
+                Point("patient_vitals")
+                  .tag("patient_id", patient_id)
+                  .time(timestamp, WritePrecision.NS)
+            )
+            for field_name, field_value in data.items():
+                if field_name in ('patient_id', 'time'):
+                    continue
+                point = point.field(field_name, field_value)
 
-        # Write the complete point to InfluxDB
-        write_api.write(INFLUXDB_BUCKET, INFLUXDB_ORG, [point])
-        logger.info(
-            f"Written data for patient {patient_id} at {timestamp_str}: "
-            + ", ".join(f"{k}={v!r}" for k, v in data.items() if k not in ('patient_id','time'))
-        )
+            # Write it
+            write_api.write(INFLUXDB_BUCKET, INFLUXDB_ORG, [point])
+            logger.info(
+                f"Wrote {patient_id}@{timestamp_str}: "
+                + ", ".join(f"{k}={v!r}" for k,v in data.items() if k not in ('patient_id','time'))
+            )
 
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing batch: {e}")
+
 
 # Close InfluxDB client
 client.close()

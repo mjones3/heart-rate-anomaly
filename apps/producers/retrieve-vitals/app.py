@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask, jsonify, request
 import os
 import math
@@ -7,28 +8,24 @@ import numpy as np
 import wfdb
 import wfdb.processing as wp
 from datetime import datetime, timedelta
-from influxdb_client import InfluxDBClient, Point, WritePrecision
-from kafka_producer import send_json_to_kafka
-from s3_utils import download_patient_data, upload_json_to_s3, OUTPUT_S3_BUCKET, OUTPUT_S3_PREFIX
-from botocore.exceptions import NoCredentialsError, ClientError
+from influxdb_client import InfluxDBClient
+from s3_utils import download_patient_data
 import scipy.signal as sps
+from kafka_producer import send_json_to_kafka
 
 # -----------------------------------------------------------------------------
 # Config & Initialization
 # -----------------------------------------------------------------------------
 DOWNLOAD_DIRECTORY = "/tmp/patientdata"
 
-# Flask
 app = Flask(__name__)
 
-# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# InfluxDB Client (reads credentials from env: INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG)
 INFLUX_URL    = os.getenv("INFLUXDB_URL",    "http://localhost:8086")
 INFLUX_TOKEN  = os.getenv("INFLUXDB_TOKEN",  "")
 INFLUX_ORG    = os.getenv("INFLUXDB_ORG",    "")
@@ -53,7 +50,8 @@ def safe_write_data(value):
     return value
 
 def handle_nan_values(signal):
-    if signal is None: return None
+    if signal is None:
+        return None
     if isinstance(signal, list):
         return [None if isinstance(x, float) and math.isnan(x) else x for x in signal]
     if isinstance(signal, np.ndarray):
@@ -72,54 +70,36 @@ def handle_invalid_signal(signal, name):
         return None
     return signal
 
-
 def compute_heart_rate(ecg, fs):
-    if ecg is None or len(ecg) < fs:  # need at least 1 second of data
+    if ecg is None or len(ecg) < fs:
         logger.warning("ECG too short")
         return None
-
-    # 1) Band-pass 5–15 Hz
     nyq = 0.5 * fs
     b, a = sps.butter(2, [5/nyq, 15/nyq], btype='band')
     ecg_filt = sps.filtfilt(b, a, ecg)
-
-    # 2) QRS detection with adaptive threshold
     try:
         qrs = wp.xqrs_detect(sig=ecg_filt, fs=fs)
     except Exception as e:
         logger.warning(f"QRS detect failed: {e}")
         return None
-
     if len(qrs) < 2:
         logger.warning("Too few QRS for HR")
         return None
-
-    # 3) RR intervals
     rr = np.diff(qrs) / fs
     rr = rr[rr > 0]
     if len(rr) == 0:
         logger.warning("No positive RR intervals")
         return None
-
-    # 4) Instantaneous HR and interpolate
     hr = 60.0 / rr
     times = qrs[1:][rr>0]
     idxs = np.arange(len(ecg))
     try:
-        hr_full = np.interp(idxs, times, hr, left=hr[0], right=hr[-1])
+        return np.interp(idxs, times, hr, left=hr[0], right=hr[-1])
     except Exception as e:
         logger.warning(f"HR interp failed: {e}")
         return None
 
-    return hr_full
-
-
 def convert_time_from_dat(time_value, base_start_date_str="2025-05-10", prev_time=0.0):
-    """
-    time_value: seconds *since the previous sample*
-    prev_time:  cumulative seconds so far (initially 0.0)
-    Returns (timestamp_str, new_total_seconds)
-    """
     new_total = prev_time + time_value
     base = datetime.strptime(base_start_date_str, "%Y-%m-%d")
     dt   = base + timedelta(seconds=new_total)
@@ -133,15 +113,13 @@ def generate_file_name(patient_id, timestamp, idx):
 # -----------------------------------------------------------------------------
 # Core Processing
 # -----------------------------------------------------------------------------
-def process_and_upload_to_s3(patient_data_dir, patient_id):
+def process_and_upload_to_kafka(patient_data_dir, patient_id):
     dat_files = [f for f in os.listdir(patient_data_dir) if f.endswith('.dat')]
     prev_time = 0.0
 
     for dat_file in dat_files[:10]:
-        base, _ = dat_file.split(".")
-        hea = base + ".hea"
-
-        dat_path = os.path.join(patient_data_dir, dat_file)
+        base, _ = dat_file.split('.')
+        hea = base + '.hea'
         hea_path = os.path.join(patient_data_dir, hea)
         if not os.path.exists(hea_path):
             logger.warning(f"Missing header for {dat_file}, skipping.")
@@ -153,68 +131,77 @@ def process_and_upload_to_s3(patient_data_dir, patient_id):
             logger.error(f"Error reading {dat_file}: {e}")
             continue
 
-        signals = getattr(record, "p_signal", None)
-        fs      = getattr(record, "fs", None)
-        n_sig   = signals.shape[1] if signals is not None else 0
+        # 1) choose analog or digital
+        if record.p_signal is not None:
+            signals = record.p_signal
+            names   = record.sig_name
+        else:
+            signals = record.d_signal
+            names   = record.channel_names
+            # apply gain/baseline scaling if available
+            gains = getattr(record, 'adc_gain', None)
+            basec = getattr(record, 'baseline', None)
+            if gains is not None and basec is not None:
+                signals = (signals - basec) * gains
 
-        time_vals = signals[:,0] if n_sig>0 else []
-        ecg       = signals[:,1] if n_sig>1 else None
-        abp       = signals[:,2] if n_sig>2 else None
-        resp      = signals[:,3] if n_sig>3 else None
+        # 2) find channel indices
+        def idx_of(label, default):
+            return names.index(label) if label in names else default
+        time_idx = idx_of('Time', 0)
+        ecg_idx  = idx_of('ECG_II', 1)
+        abp_idx  = idx_of('ABP',      2)
+        resp_idx = idx_of('RESP',     3)
 
-        ecg  = handle_invalid_signal(ecg, "ECG_II")
-        abp  = handle_invalid_signal(abp, "ABP")
-        resp = handle_invalid_signal(resp, "RESP")
+        time_vals = signals[:, time_idx]
+        ecg       = signals[:, ecg_idx]  if signals.shape[1] > ecg_idx  else None
+        abp       = signals[:, abp_idx]  if signals.shape[1] > abp_idx  else None
+        resp      = signals[:, resp_idx] if signals.shape[1] > resp_idx else None
 
+        # sanitize
+        ecg  = handle_invalid_signal(ecg,  'ECG_II')
+        abp  = handle_invalid_signal(abp,  'ABP')
+        resp = handle_invalid_signal(resp, 'RESP')
         ecg  = handle_nan_values(ecg) if ecg is not None else None
         abp  = handle_nan_values(abp) if abp is not None else None
         resp = handle_nan_values(resp) if resp is not None else None
 
-        hr_series = compute_heart_rate(ecg, fs)
+        hr_series = compute_heart_rate(ecg, record.fs)
 
+        # iterate through samples
         for idx, t_val in enumerate(time_vals):
-            timestamp_str, prev_time = convert_time_from_dat(
-                time_value = t_val,
-                prev_time  = prev_time
-            )
-
-            scaled_abp  = abp[idx]*100 if abp is not None else None
+            timestamp_str, prev_time = convert_time_from_dat(t_val, prev_time=prev_time)
+            scaled_abp  = abp[idx]*100 if abp  is not None else None
             scaled_resp = resp[idx]*20  if resp is not None else None
-            scaled_map  = abp[idx]*100  if abp is not None else None
-
-            # Use interpolated hr if available
-            actual_hr = None
+            scaled_map  = abp[idx]*100  if abp  is not None else None
+            actual_hr   = None
             if hr_series is not None:
                 try:
-                    actual_hr = safe_write_data(float(hr_series[idx]))
+                    actual_hr = float(hr_series[idx])
                 except Exception:
-                    logger.warning(f"HR series index error at {idx}")
+                    logger.warning(f"HR index error at {idx}")
 
-            # Build the full data dict
             data = {
-                "time": safe_write_data(timestamp_str),
-                "patient_id": patient_id,
-                "ECG_II": safe_write_data(ecg[idx]) if ecg is not None else None,
-                "ABP": safe_write_data(scaled_abp),
-                "RESP": safe_write_data(scaled_resp),
-                "heart_rate": actual_hr,
-                "systolic_bp": safe_write_data(scaled_abp),
-                "diastolic_bp": safe_write_data(scaled_abp),
-                "respiratory_rate": safe_write_data(scaled_resp),
+                "time":                   safe_write_data(timestamp_str),
+                "patient_id":             patient_id,
+                "ECG_II":                 safe_write_data(ecg[idx]) if ecg  is not None else None,
+                "ABP":                    safe_write_data(scaled_abp),
+                "RESP":                   safe_write_data(scaled_resp),
+                "heart_rate":             safe_write_data(actual_hr),
+                "systolic_bp":            safe_write_data(scaled_abp),
+                "diastolic_bp":           safe_write_data(scaled_abp),
+                "respiratory_rate":       safe_write_data(scaled_resp),
                 "mean_arterial_pressure": safe_write_data(scaled_map)
             }
 
-            # Kafka
-            json_buffer = json.dumps(data)
-            logger.info(f"Producing: {json_buffer}")
-            send_json_to_kafka(json_buffer)
+            # 3) produce to Kafka
+            send_json_to_kafka(json.dumps(data))
 
-            # S3
-            fn = generate_file_name(patient_id, timestamp_str, idx)
-            try:
-                upload_json_to_s3(json_buffer, patient_id, fn)
-            except (NoCredentialsError, ClientError) as e:
-                logger.error(f"S3 upload failed: {e}")
+            # 4) (optional) upload JSON to S3 if you re-enable it
+            # fn = generate_file_name(patient_id, timestamp_str, idx)
+            # key = f"{OUTPUT_S3_PREFIX.rstrip('/')}/{patient_id}/{fn}.json"
+            # upload_json_to_s3(json.dumps(data), patient_id, fn)
+
+    # done
 
 # -----------------------------------------------------------------------------
 # Flask Routes
@@ -230,12 +217,13 @@ def fetch_patient_data():
         if not is_valid_patient_id(pid):
             return jsonify({"error": "Invalid patient ID format"}), 400
 
-        data_dir = download_patient_data(patient_id=pid)
+        # Download from S3
+        data_dir = download_patient_data(pid)
         if not data_dir:
             return jsonify({"error": f"No data for {pid}"}), 404
 
-        process_and_upload_to_s3(data_dir, pid)
-        return jsonify({"message": f"Processed and uploaded data for {pid}"}), 200
+        process_and_upload_to_kafka(data_dir, pid)
+        return jsonify({"message": f"Processed data for {pid}"}), 200
 
     except Exception as exc:
         logger.error(f"Route error: {exc}")
@@ -246,4 +234,5 @@ def fetch_patient_data():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
-    app.run(host="0.0.0.0", port=8080)
+    app.debug = True
+    app.run(host="0.0.0.0", port=8080, use_reloader=True)

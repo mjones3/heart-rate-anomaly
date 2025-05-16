@@ -1,3 +1,5 @@
 kafka-python==2.0.2
 influxdb-client==1.48.0
 pandas==1.5.3
+# LZ4 decompression support for kafka-python
+lz4>=4.3.2
