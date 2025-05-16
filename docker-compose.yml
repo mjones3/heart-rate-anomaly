@@ -70,7 +70,7 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     ports:
-      - "8081:8080"
+      - "8082:8080"
     depends_on:
       - kafka
       - zookeeper
@@ -98,6 +98,26 @@ services:
     volumes:
       - ./apps/consumers/vital-timeseries:/app
 
+  fhir-consumer:
+    build:
+      context: ./apps/consumers/vital-hl7
+      dockerfile: Dockerfile
+    container_name: fhir-consumer
+    restart: unless-stopped
+    environment:
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9093"
+      KAFKA_TOPIC: "vitals"
+      CONSUMER_GROUP: "vitals-fhir-consumers"
+      # MongoDB
+      MONGO_URI: "mongodb://admin:s3cr3tPassw0rd@mongo:27017/admin"
+      MONGO_DB: "ehr"
+      MONGO_COLLECTION: "observations"
+    depends_on:
+      - kafka
+      - mongo
+    networks:
+      - kafka_network
   influxdb:
     image: influxdb:latest
     environment:
@@ -120,6 +140,34 @@ services:
       start_period: 20s
       timeout: 5s
 
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: s3cr3tPassw0rd
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - 27017:27017
+    networks:
+      - kafka_network
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_URL: "mongodb://admin:s3cr3tPassw0rd@mongo:27017/admin"
+    ports:
+      - 8081:8081
+    depends_on:
+      - mongo
+    networks:
+      - kafka_network
+
+
 networks:
   kafka_network:
     driver: bridge
@@ -129,3 +177,4 @@ volumes:
   influxdb-data:
   zookeeper-data:
   zookeeper-log:
+  mongo-data:
