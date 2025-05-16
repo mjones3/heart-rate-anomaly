@@ -30,8 +30,12 @@ services:
       KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9093,OUTSIDE://localhost:9094
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_BROKER_ID: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      # KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      
       KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     ports:
       - "9093:9093"
       - "9094:9094"
@@ -60,6 +64,7 @@ services:
       context: ./apps/producers/retrieve-vitals
     container_name: retrieve-vitals
     environment:
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - KAFKA_BROKER=kafka:9093
       - KAFKA_TOPIC=vitals
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -96,14 +101,16 @@ services:
   influxdb:
     image: influxdb:latest
     environment:
-      - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_BUCKET=vitals
-      - INFLUXDB_ORG=local
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=SuperSecret
+      - DOCKER_INFLUXDB_INIT_ORG=local
+      - DOCKER_INFLUXDB_INIT_BUCKET=vitals
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=MyInitialAdminToken123
     ports:
       - "8086:8086"
     volumes:
-      - influxdb-data:/var/lib/influxdb
+      - influxdb-data:/var/lib/influxdb2
     networks:
       - kafka_network
     healthcheck:
