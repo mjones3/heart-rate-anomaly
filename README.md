@@ -1,5 +1,48 @@
 # Heart Rate Anomaly Detection
 
+This project is a scalable pipeline that processes patient time-series data from the MIMIC-III Waveform Database.  This databse contains thousands of recordings of multiple physiologic signals (“waveforms”) and time series of vital signs (“numerics”) collected from bedside patient monitors in adult and neonatal intensive care units (ICUs).  The producer reads .dat files, processes them, and sends the data to a Kafka topic to be inserted into a time-series database and converted into HL7 FHIR records and stored in a NoSQL database.  Vitals like heart rate, blood pressure, respiration rate and oxygen saturation can be visualized with a custom dashboard in Grafana. 
+
+## Architecture
+
+![Architecture Diagram](images/heart-rate-anomaly-poc.png)
+
+1. User sends a POST request to the `/fetchPatientData` resource on the API gateway with the following:
+
+``` json
+{
+    "fetchPatientId": "p010124"
+}
+```
+
+2. The `vitals-producer` application running in Fargate retrieves the raw EGC data for the requested patient id in a `dat` file containg.  
+
+3. There are multiple samples per second (e.g. 250 per second of ECG data)  and each sample is batched, compressed and sent to a kafka topic.  
+
+A sample kafka message looks like this:
+
+``` json
+{
+  "time": "2025-05-09T23:15:00Z",
+  "patient_id": "p000020",
+  "ECG_I": 0.12,
+  "ECG_II": 0.15,
+  "ECG_III": -0.10,
+  "ABP": 120.0,
+  "RESP": 16.5,
+  "SpO2": 98.0,
+  "heart_rate": 75,
+  "systolic_bp": 120.0,
+  "diastolic_bp": 80.0,
+  "respiratory_rate": 16,
+  "mean_arterial_pressure": 93.0
+}
+```
+
+
+
+
+
+
 ## Local Setup
 
 This project uses Docker Compose to set up and run a complete local environment for simulating heart rate anomaly detection. The services are orchestrated using Docker Compose and can be easily transitioned to cloud environments like AWS using Kubernetes later.
