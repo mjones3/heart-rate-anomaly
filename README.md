@@ -42,7 +42,9 @@ A sample kafka message looks like this:
 
 5. and stores the data in a timeseries database, to be viewed on Grafana.
 
-6. The `vitals-hl7` application reads the vitals from the kafka topic, creates a FHIR (Fast Healthcare Interoperability Resources) record  and stores it in MongoDB for interoperability purposes. 
+6. The `vitals-hl7` application reads the vitals from the kafka topic, creates a FHIR (Fast Healthcare Interoperability Resources) record  
+
+7. and stores it in MongoDB for interoperability purposes.  Here's what the corresponding FHIR record looks like for the Kafka payload above:
 
 
 ``` json
