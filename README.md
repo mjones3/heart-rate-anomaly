@@ -38,7 +38,108 @@ A sample kafka message looks like this:
 }
 ```
 
+4. The `vitals-timeseries-consumer` application reads from the kafka topic 
 
+5. and stores the data in a timeseries database, to be viewed on Grafana.
+
+6. The `vitals-hl7` application reads the vitals from the kafka topic, creates a FHIR (Fast Healthcare Interoperability Resources) record  and stores it in MongoDB for interoperability purposes. 
+
+
+``` json
+{
+  "resourceType": "Observation",
+  "id": "example-observation-id",
+  "status": "final",
+  "category": [
+    {
+      "coding": [
+        {
+          "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+          "code": "vital-signs",
+          "display": "Vital Signs"
+        }
+      ],
+      "text": "Vital Signs"
+    }
+  ],
+  "code": {
+    "coding": [
+      {
+        "system": "http://loinc.org",
+        "code": "8462-4",
+        "display": "Heart rate"
+      },
+      {
+        "system": "http://loinc.org",
+        "code": "85354-9",
+        "display": "Systolic blood pressure"
+      },
+      {
+        "system": "http://loinc.org",
+        "code": "8460-7",
+        "display": "Diastolic blood pressure"
+      },
+      {
+        "system": "http://loinc.org",
+        "code": "2710-2",
+        "display": "Respiratory rate"
+      },
+      {
+        "system": "http://loinc.org",
+        "code": "59408-5",
+        "display": "Oxygen saturation"
+      }
+    ],
+    "text": "Heart rate, Blood pressure, Respiratory rate, Oxygen saturation"
+  },
+  "subject": {
+    "reference": "Patient/p000020",
+    "display": "Patient p000020"
+  },
+  "effectiveDateTime": "2025-05-09T23:15:00Z",
+  "valueQuantity": [
+    {
+      "value": 75,
+      "unit": "beats/minute",
+      "system": "http://unitsofmeasure.org",
+      "code": "/min"
+    },
+    {
+      "value": 120,
+      "unit": "mmHg",
+      "system": "http://unitsofmeasure.org",
+      "code": "mm[Hg]"
+    },
+    {
+      "value": 80,
+      "unit": "mmHg",
+      "system": "http://unitsofmeasure.org",
+      "code": "mm[Hg]"
+    },
+    {
+      "value": 16,
+      "unit": "breaths/minute",
+      "system": "http://unitsofmeasure.org",
+      "code": "/min"
+    },
+    {
+      "value": 98,
+      "unit": "%",
+      "system": "http://unitsofmeasure.org",
+      "code": "%"
+    }
+  ],
+  "interpretation": {
+    "coding": [
+      {
+        "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+        "code": "N",
+        "display": "Normal"
+      }
+    ]
+  }
+}
+```
 
 
 
